@@ -13,6 +13,8 @@ namespace LogicSimplifier
         public Dictionary<string, AdditiveLogicChain[]> newWaypointLogic;
         Dictionary<string, AdditiveLogicChain[]> origLocationLogic;
         public Dictionary<string, AdditiveLogicChain[]> newLocationLogic;
+        public Dictionary<string, AdditiveLogicChain[]> newGrubLogic;
+
 
         WaypointData WData;
         LocationData LData;
@@ -23,6 +25,9 @@ namespace LogicSimplifier
 
         public delegate void SolveLocationsHookHandler(string loc);
         public SolveLocationsHookHandler SolveLocationsHook;
+
+        public delegate void SolveGrubsHookHandler(int counter);
+        public SolveGrubsHookHandler SolveGrubsHook;
 
         public LogicSimplifier(WaypointData wData, LocationData lData, Dictionary<string, bool> settings = null)
         {
@@ -72,15 +77,15 @@ namespace LogicSimplifier
                 newRelLogic = RemoveSupersets(newRelLogic);
 
                 // monotonicity check -- new absolute logic should not be a superset of any existing statements
-                newAbsLogic = newAbsLogic.Where(l => absLogic[l.target].All(r => !r.IsContainedIn(l))).ToList();
+                newAbsLogic = newAbsLogic.Where(l => absLogic[l.target].All(r => !r.IsContainedInT(l))).ToList();
 
                 // monotonicity check -- new relative logic should not be a superset of any existing statements
-                newRelLogic = newRelLogic.Where(l => relLogic[l.target].All(r => !r.IsContainedIn(l))).ToList();
+                newRelLogic = newRelLogic.Where(l => relLogic[l.target].All(r => !r.IsContainedInT(l))).ToList();
 
                 // monotonicity check -- remove any old absolute logic statements that are supersets of new statements, and add new statements
                 foreach (var absChain in newAbsLogic)
                 {
-                    List<AdditiveLogicChain> temp = absLogic[absChain.target].Where(r => !absChain.IsContainedIn(r)).ToList();
+                    List<AdditiveLogicChain> temp = absLogic[absChain.target].Where(r => !absChain.IsContainedInT(r)).ToList();
                     temp.Add(absChain);
                     absLogic[absChain.target] = temp;
                     updates.Push(absChain);
@@ -89,7 +94,7 @@ namespace LogicSimplifier
                 // monotonicity check -- remove any old relative logic statements that are supersets of new statements, and add new statements
                 foreach (var relChain in newRelLogic)
                 {
-                    List<AdditiveLogicChain> temp = relLogic[relChain.target].Where(r => !relChain.IsContainedIn(r)).ToList();
+                    List<AdditiveLogicChain> temp = relLogic[relChain.target].Where(r => !relChain.IsContainedInT(r)).ToList();
                     temp.Add(relChain);
                     relLogic[relChain.target] = temp;
                     //updates.Push(relChain);
@@ -106,7 +111,168 @@ namespace LogicSimplifier
                 kvp => RemoveSupersets(kvp.Value.SelectMany(SubstituteWaypoints).ToList()).ToArray());
         }
 
-        public List<AdditiveLogicChain> RemoveSupersets(List<AdditiveLogicChain> chains)
+        public void SimplifyGrubs()
+        {
+            string[] msjp = new string[]
+            {
+                "Shop",
+                "Dreamer",
+                "Skill",
+                "Charm",
+                "Key",
+                "Mask",
+                "Vessel",
+                "Notch",
+                "Ore",
+                "Geo",
+                "Relic",
+                "Egg",
+                "Stag"
+            };
+
+            Dictionary<string, SimpleLogicChain[]> oldGrubLogic = newLocationLogic
+                .Where(kvp => msjp.Contains(LData.GetLocationDef(kvp.Key).pool))
+                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Select(c => new SimpleLogicChain(c)).ToArray());
+            this.newGrubLogic = new Dictionary<string, AdditiveLogicChain[]>();
+
+            Dictionary<SimpleLogicChain, int> grubCounts = new Dictionary<SimpleLogicChain, int>();
+
+            int GrubCount(SimpleLogicChain chain)
+            {
+                if (grubCounts.TryGetValue(chain, out int count))
+                {
+                    return count;
+                }
+                else
+                {
+                    count = oldGrubLogic.Count(kvp => kvp.Value.Any(c => c.IsContainedIn(chain)));
+                    grubCounts[chain] = count;
+                    return count;
+                }
+            }
+
+            bool GrubContained(SimpleLogicChain subChain, SimpleLogicChain superChain)
+            {
+                return subChain.IsContainedIn(superChain) && GrubCount(subChain) == GrubCount(superChain);
+            }
+
+            List<SimpleLogicChain> RemoveGrubSupersets(List<SimpleLogicChain> chains)
+            {
+                chains = chains.ToList();
+                do
+                {
+                    int? dupChain = null;
+                    for (int i = 0; i < chains.Count; i++)
+                    {
+                        for (int j = 0; j < chains.Count; j++)
+                        {
+                            if (i == j) continue;
+
+                            if (GrubContained(chains[i], chains[j]))
+                            {
+                                dupChain = j;
+                                break;
+                            }
+                        }
+                        if (dupChain is null) continue;
+                        else break;
+                    }
+
+                    if (dupChain is int dChain)
+                    {
+                        chains.RemoveAt(dChain);
+                        continue;
+                    }
+                    else break;
+                }
+                while (true);
+
+                return chains;
+            }
+
+            List<SimpleLogicChain> primitives = RemoveGrubSupersets(oldGrubLogic.Values.SelectMany(s => s).ToList());
+            //HashSet<SimpleLogicChain> runningGrubLogic = new HashSet<SimpleLogicChain>();
+            //runningGrubLogic.Add(SimpleLogicChain.Empty);
+
+            primitives.Add(SimpleLogicChain.Empty);
+            Queue<HashSet<SimpleLogicChain>> iterate = new Queue<HashSet<SimpleLogicChain>>
+                (primitives.Select(p => new HashSet<SimpleLogicChain> { p }));
+
+            while (iterate.Count > 1)
+            {
+                var p1 = iterate.Dequeue();
+                var p2 = iterate.Dequeue();
+                SimpleLogicChain.OrPlusWith(p1, p2);
+                p1 = new HashSet<SimpleLogicChain>(
+                        p1
+                        .GroupBy(c => GrubCount(c))
+                        .SelectMany(g => SimpleLogicChain.RemoveSupersets(g)));
+                iterate.Enqueue(p1);
+
+                lock ((object)LogicSimplifierApp.info)
+                {
+                    LogicSimplifierApp.info.updateDepth = iterate.Count;
+                    LogicSimplifierApp.info.updateStack = primitives.Count;
+                    LogicSimplifierApp.info.lastPoint = $"Grubs logic: {iterate.Aggregate(0, (accum, u) => accum + u.Count)}";
+                }
+            }
+            HashSet<SimpleLogicChain> runningGrubLogic = iterate.Dequeue();
+
+            /*
+            for (int i = 0; i < primitives.Count; i++)
+            {
+                if (!runningGrubLogic.Contains(primitives[i]))
+                {
+                    SimpleLogicChain.OrPlusWith(runningGrubLogic, primitives[i]);
+                    runningGrubLogic = new HashSet<SimpleLogicChain>(
+                        runningGrubLogic
+                        .GroupBy(c => GrubCount(c))
+                        .SelectMany(g => SimpleLogicChain.RemoveSupersets(g)));
+                }
+
+                lock ((object)LogicSimplifierApp.info)
+                {
+                    LogicSimplifierApp.info.updateDepth = i+1;
+                    LogicSimplifierApp.info.updateStack = primitives.Count;
+                    LogicSimplifierApp.info.lastPoint = $"Grubs logic: {runningGrubLogic.Count}";
+                }
+            }
+            */
+
+            List<(int, List<SimpleLogicChain>)> sortedChains = runningGrubLogic
+                .GroupBy(c => GrubCount(c))
+                .Select(g => (g.Key, g.ToList()))
+                .OrderBy(g => -g.Key).ToList();
+
+            List<SimpleLogicChain> accumChains = new List<SimpleLogicChain>();
+            List<(int, List<SimpleLogicChain>)> aggregatedChains = new List<(int, List<SimpleLogicChain>)>();
+
+            foreach (var pair in sortedChains)
+            {
+                accumChains.AddRange(pair.Item2);
+                accumChains = SimpleLogicChain.RemoveSupersets(accumChains);
+                aggregatedChains.Add((pair.Item1, accumChains.ToList()));
+            }
+
+            aggregatedChains.Reverse();
+            newGrubLogic = aggregatedChains.ToDictionary(p => p.Item1.ToString(), p =>
+            {
+                return p.Item2.Select(c => new AdditiveLogicChain
+                {
+                    target = p.Item1.ToString(),
+                    waypoints = new string[0],
+                    misc = c.reqs.ToArray()
+                }).ToArray();
+            });
+
+            {
+                string s = string.Join("\n", newGrubLogic.Select(kvp => (kvp.Value.Length, kvp.Key)).OrderBy(p => p)
+                    .Select(p => $"{p.Item2}, {p.Item1}"));
+                LogicSimplifierApp.SendError(s);
+            }
+        }
+
+        public List<AdditiveLogicChain> RemoveSupersets(List<AdditiveLogicChain> chains, bool considerTargets = true)
         {
             chains = chains.ToList();
             do
@@ -118,7 +284,7 @@ namespace LogicSimplifier
                     {
                         if (i == j) continue;
 
-                        if (chains[i].IsContainedIn(chains[j]))
+                        if (considerTargets ? chains[i].IsContainedInT(chains[j]) : chains[i].IsContainedIn(chains[j]))
                         {
                             dupChain = chains[j];
                             break;
@@ -139,6 +305,41 @@ namespace LogicSimplifier
 
             return chains;
         }
+
+        public List<AdditiveLogicChain> RemoveMiscDuplicates(List<AdditiveLogicChain> chains)
+        {
+            chains = chains.ToList();
+            do
+            {
+                AdditiveLogicChain? dupChain = null;
+                for (int i = 0; i < chains.Count; i++)
+                {
+                    for (int j = 0; j < chains.Count; j++)
+                    {
+                        if (i == j) continue;
+
+                        if (chains[i].MiscEqual(chains[j]))
+                        {
+                            dupChain = chains[j];
+                            break;
+                        }
+                    }
+                    if (dupChain is null) continue;
+                    else break;
+                }
+
+                if (dupChain is AdditiveLogicChain dChain)
+                {
+                    chains.Remove(dChain);
+                    continue;
+                }
+                else break;
+            }
+            while (true);
+
+            return chains;
+        }
+
 
         public AdditiveLogicChain[] SubstituteSettings(AdditiveLogicChain[] chains, Dictionary<string, bool> settings)
         {

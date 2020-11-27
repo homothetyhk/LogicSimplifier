@@ -16,6 +16,7 @@ namespace LogicSimplifier
         public static Dictionary<string, string> macros;
         public static Dictionary<string, string> combos;
 
+
         public static void Load()
         {
             try
@@ -37,7 +38,8 @@ namespace LogicSimplifier
                 locations = new LocationData(locationDoc.SelectNodes("randomizer/item").Cast<XmlNode>()
                     .ToDictionary(x => x.Attributes["name"].Value, x => new LocationDef
                     {
-                        logic = x.ChildNodes.Cast<XmlNode>().First(c => c.LocalName.Contains("ogic")).InnerText
+                        logic = x.ChildNodes.Cast<XmlNode>().First(c => c.LocalName.Contains("ogic")).InnerText,
+                        pool = x.ChildNodes.Cast<XmlNode>().First(c => c.LocalName == "pool").InnerText,
                     }));
 
                 XmlDocument macroDoc = new XmlDocument();

@@ -62,6 +62,7 @@ namespace LogicSimplifier
             LogicSimplifier ls = new LogicSimplifier(XmlLoader.waypoints, XmlLoader.locations, GetSelectedSettings());
             ls.SolveWaypointsHook += UpdateInfoData;
             ls.SolveLocationsHook += UpdateInfoString;
+            ls.SolveGrubsHook += UpdateGrubInfo;
             stopwatch = new Stopwatch();
             stopwatch.Start();
             LSThread = new Thread(() => 
@@ -70,10 +71,13 @@ namespace LogicSimplifier
                 {
                     ls.SimplifyWaypoints(waypoint);
                     ls.SimplifyLocations();
+                    ls.SimplifyGrubs();
+
                     buttonCompute.BeginInvoke((MethodInvoker)delegate
                     {
                         XmlLoader.Save("waypoints.xml", ls.SerializeLogic(ls.newWaypointLogic));
                         XmlLoader.Save("locations.xml", ls.SerializeLogic(ls.newLocationLogic));
+                        XmlLoader.Save("grubs.xml", ls.SerializeLogic(ls.newGrubLogic));
                         MessageBox.Show("Logic simplification successful.");
                         buttonCompute.Enabled = true;
                     });
@@ -108,7 +112,7 @@ namespace LogicSimplifier
         }
 
         Stopwatch stopwatch;
-        (int updateDepth, int updateStack, int relLogic, int absLogic, string lastPoint) info;
+        public static (int updateDepth, int updateStack, int relLogic, int absLogic, string lastPoint) info;
 
         private void UpdateInfoData(AdditiveLogicChain updateChain, int counter, Stack<AdditiveLogicChain> updateStack,
             Dictionary<string, List<AdditiveLogicChain>> relLogic, Dictionary<string, List<AdditiveLogicChain>> absLogic)
@@ -130,6 +134,14 @@ namespace LogicSimplifier
             {
                 info.updateStack = 0;
                 info.lastPoint = s;
+            }
+        }
+
+        private void UpdateGrubInfo(int i)
+        {
+            lock ((object)info)
+            {
+                info.lastPoint = $"{i} grub(s)";
             }
         }
 

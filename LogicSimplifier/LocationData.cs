@@ -9,6 +9,7 @@ namespace LogicSimplifier
     public struct LocationDef
     {
         public string logic;
+        public string pool;
     }
 
     public class LocationData
